@@ -5,10 +5,8 @@ from sdv.metadata import SingleTableMetadata
 from sdv.single_table import GaussianCopulaSynthesizer
 
 # ----------------------
-# SYNTHETIC SWAPTION TRADE GENERATOR 
-# Team FAIR & SQUARE
+# CONFIGURATION
 # ----------------------
-
 np.random.seed(42)
 NUM_TRADES = 1000
 
@@ -38,6 +36,7 @@ def generate_trade(seq_id, force_usd_level2=False, force_level3=False):
     if force_usd_level2:
         strike = round(np.random.uniform(0.5, 2.9), 2)
         currency = "USD"
+        pnl_flag = "No"
     elif force_level3:
         strike = round(np.random.uniform(3.1, 5.0), 2)
         currency = np.random.choice(["EUR", "GBP", "JPY"])
@@ -45,9 +44,11 @@ def generate_trade(seq_id, force_usd_level2=False, force_level3=False):
         maturity_tenor = np.random.choice([15, 20, 30])
         expiry_date = trade_date + timedelta(days=int(expiry_tenor * 365))
         maturity_date = trade_date + timedelta(days=int(maturity_tenor * 365))
+        pnl_flag = "Yes"
     else:
         strike = round(np.random.uniform(0.5, 5.0), 2)
         currency = np.random.choice(["EUR", "USD", "GBP", "JPY"])
+        pnl_flag = np.random.choice(["Yes", "No"], p=[0.2, 0.8])
 
     level = determine_ifrs13_level(currency, expiry_tenor, maturity_tenor, strike)
 
@@ -67,42 +68,26 @@ def generate_trade(seq_id, force_usd_level2=False, force_level3=False):
         "expiry_tenor": expiry_tenor,
         "maturity_tenor": maturity_tenor,
         "ifrs13_level": level,
-        "Day2_Pnl_Above_Threshold": "No"  # Placeholder, updated below
+        "Day1_Pnl": pnl_flag
     }
 
 # ----------------------
 # DATA GENERATION
 # ----------------------
 data = []
-
 level2_count = int(NUM_TRADES * 0.8)
 level3_count = NUM_TRADES - level2_count
-level3_yes_count = int(level3_count * 0.15)
-level3_no_count = level3_count - level3_yes_count
 
-# Generate Level 2 trades (all with PnL = No)
+# Generate trades
 for i in range(1, level2_count + 1):
-    trade = generate_trade(i, force_usd_level2=True)
-    trade["Day2_Pnl_Above_Threshold"] = "No"
-    data.append(trade)
-
-# Generate Level 3 trades
-# 15% of Level 3 → PnL Yes
-for i in range(level2_count + 1, level2_count + 1 + level3_yes_count):
-    trade = generate_trade(i, force_level3=True)
-    trade["Day2_Pnl_Above_Threshold"] = "Yes"
-    data.append(trade)
-
-# 85% of Level 3 → PnL No
-for i in range(level2_count + 1 + level3_yes_count, NUM_TRADES + 1):
-    trade = generate_trade(i, force_level3=True)
-    trade["Day2_Pnl_Above_Threshold"] = "No"
-    data.append(trade)
+    data.append(generate_trade(i, force_usd_level2=True))
+for i in range(level2_count + 1, NUM_TRADES + 1):
+    data.append(generate_trade(i, force_level3=True))
 
 df = pd.DataFrame(data)
 
 # ----------------------
-# METADATA & SYNTHESIS
+# METADATA
 # ----------------------
 metadata = SingleTableMetadata()
 metadata.detect_from_dataframe(df)
@@ -112,23 +97,33 @@ metadata.update_column("trade_date", sdtype="datetime")
 metadata.update_column("expiry_date", sdtype="datetime")
 metadata.update_column("maturity_date", sdtype="datetime")
 
+# ----------------------
+# SYNTHESIS
+# ----------------------
 synth = GaussianCopulaSynthesizer(metadata)
 synth.fit(df)
 synthetic_df = synth.sample(NUM_TRADES)
 
-# Clean up
+# Post-process dates
 for col in ["trade_date", "expiry_date", "maturity_date"]:
     synthetic_df[col] = pd.to_datetime(synthetic_df[col]).dt.date
+
+# Round notional
 synthetic_df["notional"] = synthetic_df["notional"].apply(lambda x: round(x / 100_000) * 100_000).astype(int)
 
+# Enforce: Day1_Pnl == "Yes" → mostly Level 3
+mask = (synthetic_df["Day1_Pnl"] == "Yes") & (synthetic_df["ifrs13_level"] == "Level 2")
+flip_indices = synthetic_df[mask].sample(frac=0.9, random_state=42).index
+synthetic_df.loc[flip_indices, "ifrs13_level"] = "Level 3"
+
 # ----------------------
-# OUTPUT
+# OUTPUT FILE
 # ----------------------
 output_file = "Synthetic_Swaption_Trades_With_IFRS13_Level.csv"
 synthetic_df.to_csv(output_file, index=False)
 print(f"✅ File saved: {output_file}")
 print("Sample:")
-print(synthetic_df[["trade_id", "currency", "strike", "Day2_Pnl_Above_Threshold", "ifrs13_level"]].head())
+print(synthetic_df[["trade_id", "currency", "strike", "Day1_Pnl", "ifrs13_level"]].head())
 
 # ----------------------
 # DISTRIBUTION SUMMARY
@@ -136,12 +131,12 @@ print(synthetic_df[["trade_id", "currency", "strike", "Day2_Pnl_Above_Threshold"
 print("\n📊 [AFTER SYNTHESIS] IFRS13 Level Distribution (%):")
 print(synthetic_df['ifrs13_level'].value_counts(normalize=True).mul(100).round(2).to_string())
 
-print("\n📊 [AFTER SYNTHESIS] Day2_Pnl_Above_Threshold Distribution (%):")
-print(synthetic_df['Day2_Pnl_Above_Threshold'].value_counts(normalize=True).mul(100).round(2).to_string())
+print("\n📊 [AFTER SYNTHESIS] Day1_Pnl Distribution (%):")
+print(synthetic_df['Day1_Pnl'].value_counts(normalize=True).mul(100).round(2).to_string())
 
-print("\n📊 [AFTER SYNTHESIS] Cross Distribution (% by Day2_Pnl_Above_Threshold):")
+print("\n📊 [AFTER SYNTHESIS] Cross Distribution (% by Day1_Pnl):")
 cross_tab = pd.crosstab(
-    synthetic_df["Day2_Pnl_Above_Threshold"],
+    synthetic_df["Day1_Pnl"],
     synthetic_df["ifrs13_level"],
     normalize="index"
 ).mul(100).round(2)
