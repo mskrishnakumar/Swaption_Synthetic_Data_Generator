@@ -68,7 +68,7 @@ def generate_trade(seq_id, force_usd_level2=False, force_level3=False):
         "expiry_tenor": expiry_tenor,
         "maturity_tenor": maturity_tenor,
         "ifrs13_level": level,
-        "Day1_Pnl": pnl_flag
+        "Day1_Pnl_above_threshold": pnl_flag
     }
 
 # ----------------------
@@ -114,33 +114,46 @@ synthetic_df["notional"] = synthetic_df["notional"].apply(lambda x: round(x / 10
 # ----------------------
 # ENFORCE SOFT RELATIONSHIP
 # ----------------------
-# 70% of "Day1_Pnl" == "Yes" and Level 2 → switch to Level 3
 mask = (synthetic_df["Day1_Pnl"] == "Yes") & (synthetic_df["ifrs13_level"] == "Level 2")
-flip_indices = synthetic_df[mask].sample(frac=0.7, random_state=42).index
+flip_indices = synthetic_df[mask].sample(frac=0.3, random_state=42).index
 synthetic_df.loc[flip_indices, "ifrs13_level"] = "Level 3"
+
+# ----------------------
+# ENFORCE 80/20 DISTRIBUTION
+# ----------------------
+level2_target = int(NUM_TRADES * 0.8)
+level3_target = NUM_TRADES - level2_target
+
+level2_candidates = synthetic_df[synthetic_df["ifrs13_level"] == "Level 2"]
+level3_candidates = synthetic_df[synthetic_df["ifrs13_level"] == "Level 3"]
+
+balanced_df = pd.concat([
+    level2_candidates.sample(level2_target, replace=True, random_state=42),
+    level3_candidates.sample(level3_target, replace=True, random_state=42)
+]).sample(frac=1, random_state=42).reset_index(drop=True)
 
 # ----------------------
 # OUTPUT
 # ----------------------
 output_file = "Synthetic_Swaption_Trades_With_IFRS13_Level.csv"
-synthetic_df.to_csv(output_file, index=False)
+balanced_df.to_csv(output_file, index=False)
 print(f"✅ File saved: {output_file}")
 print("Sample:")
-print(synthetic_df[["trade_id", "currency", "strike", "Day1_Pnl", "ifrs13_level"]].head())
+print(balanced_df[["trade_id", "currency", "strike", "Day1_Pnl", "ifrs13_level"]].head())
 
 # ----------------------
 # DISTRIBUTION SUMMARY
 # ----------------------
 print("\n📊 [AFTER SYNTHESIS] IFRS13 Level Distribution (%):")
-print(synthetic_df['ifrs13_level'].value_counts(normalize=True).mul(100).round(2).to_string())
+print(balanced_df['ifrs13_level'].value_counts(normalize=True).mul(100).round(2).to_string())
 
 print("\n📊 [AFTER SYNTHESIS] Day1_Pnl Distribution (%):")
-print(synthetic_df['Day1_Pnl'].value_counts(normalize=True).mul(100).round(2).to_string())
+print(balanced_df['Day1_Pnl'].value_counts(normalize=True).mul(100).round(2).to_string())
 
 print("\n📊 [AFTER SYNTHESIS] Cross Distribution (% by Day1_Pnl):")
 cross_tab = pd.crosstab(
-    synthetic_df["Day1_Pnl"],
-    synthetic_df["ifrs13_level"],
+    balanced_df["Day1_Pnl"],
+    balanced_df["ifrs13_level"],
     normalize="index"
 ).mul(100).round(2)
 print(cross_tab.to_string())
