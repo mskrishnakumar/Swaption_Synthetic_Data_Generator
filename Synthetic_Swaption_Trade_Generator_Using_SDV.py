@@ -15,9 +15,6 @@ from sdv.single_table import GaussianCopulaSynthesizer
 # ----------------------
 np.random.seed(42)
 NUM_TRADES = 1000            # Total number of trades to generate
-USD_BIAS_RATIO = 0.4         # Fraction to force as Level 2 USD
-BIAS_COUNT = int(NUM_TRADES * USD_BIAS_RATIO)
-GEN_COUNT = NUM_TRADES - BIAS_COUNT
 
 # ----------------------
 # HELPERS
@@ -36,7 +33,7 @@ def determine_ifrs13_level(currency, expiry_tenor, maturity_tenor, strike):
     )
     return "Level 2" if is_level2 else "Level 3"
 
-def generate_trade(seq_id, force_usd_level2=False):
+def generate_trade(seq_id, force_usd_level2=False, force_level3=False):
     trade_date = random_past_date()
     expiry_tenor = np.random.choice([2, 3, 5])
     maturity_tenor = np.random.choice([5, 10, 15, 20, 30])
@@ -46,9 +43,19 @@ def generate_trade(seq_id, force_usd_level2=False):
     if force_usd_level2:
         strike = round(np.random.uniform(0.5, 2.9), 2)
         currency = "USD"
+        pnl_flag = "No"
+    elif force_level3:
+        strike = round(np.random.uniform(3.1, 5.0), 2)
+        currency = np.random.choice(["EUR", "GBP", "JPY"])
+        expiry_tenor = np.random.choice([1, 5])
+        maturity_tenor = np.random.choice([15, 20, 30])
+        expiry_date = trade_date + timedelta(days=int(expiry_tenor * 365))
+        maturity_date = trade_date + timedelta(days=int(maturity_tenor * 365))
+        pnl_flag = "Yes"
     else:
         strike = round(np.random.uniform(0.5, 5.0), 2)
         currency = np.random.choice(["EUR", "USD", "GBP", "JPY"])
+        pnl_flag = np.random.choice(["Yes", "No"], p=[0.2, 0.8])
 
     level = determine_ifrs13_level(currency, expiry_tenor, maturity_tenor, strike)
 
@@ -67,7 +74,8 @@ def generate_trade(seq_id, force_usd_level2=False):
         "counterparty_id": f"CPTY{np.random.randint(1000, 9999)}",
         "expiry_tenor": expiry_tenor,
         "maturity_tenor": maturity_tenor,
-        "ifrs13_level": level
+        "ifrs13_level": level,
+        "Day2_Pnl_Above_Threshold": pnl_flag
     }
 
 # ----------------------
@@ -75,13 +83,16 @@ def generate_trade(seq_id, force_usd_level2=False):
 # ----------------------
 data = []
 
-# USD Level 2 biased trades
-for i in range(1, BIAS_COUNT + 1):
+level2_count = int(NUM_TRADES * 0.8)
+level3_count = NUM_TRADES - level2_count
+
+# Generate Level 2 trades
+for i in range(1, level2_count + 1):
     data.append(generate_trade(i, force_usd_level2=True))
 
-# General trades
-for i in range(BIAS_COUNT + 1, NUM_TRADES + 1):
-    data.append(generate_trade(i, force_usd_level2=False))
+# Generate Level 3 trades
+for i in range(level2_count + 1, NUM_TRADES + 1):
+    data.append(generate_trade(i, force_level3=True))
 
 df = pd.DataFrame(data)
 
@@ -91,11 +102,8 @@ df = pd.DataFrame(data)
 metadata = SingleTableMetadata()
 metadata.detect_from_dataframe(df)
 
-# Fix trade_id from being auto-id'd
 metadata.primary_key = None
 metadata.update_column("trade_id", sdtype="categorical")
-
-# Set datetime fields properly
 metadata.update_column("trade_date", sdtype="datetime")
 metadata.update_column("expiry_date", sdtype="datetime")
 metadata.update_column("maturity_date", sdtype="datetime")
@@ -107,9 +115,10 @@ synth = GaussianCopulaSynthesizer(metadata)
 synth.fit(df)
 synthetic_df = synth.sample(NUM_TRADES)
 
-# Clean date columns (remove time)
+# Clean date columns
 for col in ["trade_date", "expiry_date", "maturity_date"]:
     synthetic_df[col] = pd.to_datetime(synthetic_df[col]).dt.date
+
 # Round notional to nearest 100,000
 synthetic_df["notional"] = synthetic_df["notional"].apply(lambda x: round(x / 100_000) * 100_000).astype(int)
 
@@ -120,4 +129,4 @@ output_file = "Synthetic_Swaption_Trades_With_IFRS13_Level.csv"
 synthetic_df.to_csv(output_file, index=False)
 print(f"✅ File saved: {output_file}")
 print("Sample:")
-print(synthetic_df[["trade_id", "currency", "strike", "notional", "expiry_tenor", "maturity_tenor", "ifrs13_level"]].head())
+print(synthetic_df[["trade_id", "currency", "strike", "Day2_Pnl_Above_Threshold", "ifrs13_level"]].head())
