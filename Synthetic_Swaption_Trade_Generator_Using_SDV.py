@@ -8,7 +8,7 @@ from sdv.single_table import GaussianCopulaSynthesizer
 # CONFIGURATION
 # ----------------------
 np.random.seed(42)
-NUM_TRADES = 1000
+NUM_TRADES = 10000
 
 # ----------------------
 # HELPERS
@@ -68,7 +68,6 @@ def generate_trade(seq_id, force_usd_level2=False, force_level3=False):
         "expiry_tenor": expiry_tenor,
         "maturity_tenor": maturity_tenor,
         "ifrs13_level": level,
-        "Day1_Pnl": pnl_flag
     }
 
 # ----------------------
@@ -112,13 +111,6 @@ for col in ["trade_date", "expiry_date", "maturity_date"]:
 synthetic_df["notional"] = synthetic_df["notional"].apply(lambda x: round(x / 100_000) * 100_000).astype(int)
 
 # ----------------------
-# ENFORCE SOFT RELATIONSHIP
-# ----------------------
-mask = (synthetic_df["Day1_Pnl"] == "Yes") & (synthetic_df["ifrs13_level"] == "Level 2")
-flip_indices = synthetic_df[mask].sample(frac=0.3, random_state=42).index
-synthetic_df.loc[flip_indices, "ifrs13_level"] = "Level 3"
-
-# ----------------------
 # ENFORCE 80/20 DISTRIBUTION
 # ----------------------
 level2_target = int(NUM_TRADES * 0.8)
@@ -147,21 +139,10 @@ output_file = "Synthetic_Swaption_Trades_With_IFRS13_Level.csv"
 balanced_df.to_csv(output_file, index=False)
 print(f"✅ File saved: {output_file}")
 print("Sample:")
-print(balanced_df[["trade_id", "currency", "strike", "Day1_Pnl", "ifrs13_level"]].head())
+print(balanced_df[["trade_id", "currency", "strike", "ifrs13_level"]].head())
 
 # ----------------------
 # DISTRIBUTION SUMMARY
 # ----------------------
-print("\n📊 [AFTER SYNTHESIS] IFRS13 Level Distribution (%):")
+print("📊 [AFTER SYNTHESIS] IFRS13 Level Distribution (%):")
 print(balanced_df['ifrs13_level'].value_counts(normalize=True).mul(100).round(2).to_string())
-
-print("\n📊 [AFTER SYNTHESIS] Day1_Pnl Distribution (%):")
-print(balanced_df['Day1_Pnl'].value_counts(normalize=True).mul(100).round(2).to_string())
-
-print("\n📊 [AFTER SYNTHESIS] Cross Distribution (% by Day1_Pnl):")
-cross_tab = pd.crosstab(
-    balanced_df["Day1_Pnl"],
-    balanced_df["ifrs13_level"],
-    normalize="index"
-).mul(100).round(2)
-print(cross_tab.to_string())
