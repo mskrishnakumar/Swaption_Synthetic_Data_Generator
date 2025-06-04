@@ -133,6 +133,14 @@ balanced_df = pd.concat([
 ]).sample(frac=1, random_state=42).reset_index(drop=True)
 
 # ----------------------
+# CLASS WEIGHT ASSIGNMENT
+# ----------------------
+balanced_df["class_weight"] = balanced_df["ifrs13_level"].map({
+    "Level 2": 1.0,
+    "Level 3": 4.0
+})
+
+# ----------------------
 # OUTPUT
 # ----------------------
 output_file = "Synthetic_Swaption_Trades_With_IFRS13_Level.csv"
