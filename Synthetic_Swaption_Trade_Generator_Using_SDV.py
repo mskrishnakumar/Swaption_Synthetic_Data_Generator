@@ -104,20 +104,23 @@ synth = GaussianCopulaSynthesizer(metadata)
 synth.fit(df)
 synthetic_df = synth.sample(NUM_TRADES)
 
-# Post-process dates
+# Clean dates
 for col in ["trade_date", "expiry_date", "maturity_date"]:
     synthetic_df[col] = pd.to_datetime(synthetic_df[col]).dt.date
 
 # Round notional
 synthetic_df["notional"] = synthetic_df["notional"].apply(lambda x: round(x / 100_000) * 100_000).astype(int)
 
-# Enforce: Day1_Pnl == "Yes" → mostly Level 3
+# ----------------------
+# ENFORCE SOFT RELATIONSHIP
+# ----------------------
+# 70% of "Day1_Pnl" == "Yes" and Level 2 → switch to Level 3
 mask = (synthetic_df["Day1_Pnl"] == "Yes") & (synthetic_df["ifrs13_level"] == "Level 2")
-flip_indices = synthetic_df[mask].sample(frac=0.9, random_state=42).index
+flip_indices = synthetic_df[mask].sample(frac=0.7, random_state=42).index
 synthetic_df.loc[flip_indices, "ifrs13_level"] = "Level 3"
 
 # ----------------------
-# OUTPUT FILE
+# OUTPUT
 # ----------------------
 output_file = "Synthetic_Swaption_Trades_With_IFRS13_Level.csv"
 synthetic_df.to_csv(output_file, index=False)
