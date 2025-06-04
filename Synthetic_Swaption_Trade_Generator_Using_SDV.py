@@ -68,7 +68,7 @@ def generate_trade(seq_id, force_usd_level2=False, force_level3=False):
         "expiry_tenor": expiry_tenor,
         "maturity_tenor": maturity_tenor,
         "ifrs13_level": level,
-        "Day1_Pnl_above_threshold": pnl_flag
+        "Day1_Pnl": pnl_flag
     }
 
 # ----------------------
